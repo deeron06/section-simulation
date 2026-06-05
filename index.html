@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portal Practice - Seat Selection</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* Modern Minimal Loading styles to complement style.css structural layouts */
+        .loader-wrapper { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 16px; margin-top: 20px; min-height: 280px; text-align: center; }
+        .circle-container { position: relative; width: 120px; height: 120px; display: flex; align-items: center; justify-content: center; margin-bottom: 24px; }
+        .circle-svg { transform: rotate(-90deg); width: 120px; height: 120px; }
+        .circle-bg { fill: none; stroke: var(--border-color); stroke-width: 8; }
+        .circle-progress { fill: none; stroke: var(--primary); stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset 0.05s linear, stroke 0.3s ease; }
+        .countdown-text { position: absolute; font-size: 28px; font-weight: 800; color: var(--text-main); font-variant-numeric: tabular-nums; }
+        .loader-title { font-size: 18px; font-weight: 700; color: var(--text-main); margin-bottom: 6px; }
+        
+        /* Ultra-Reliable Always-Visible Modal Layout Fixes */
+        .modal-body {
+            max-height: 400px;
+            overflow-y: scroll !important;
+            padding-right: 14px;
+        }
+
+        /* Standard Webkit Track Customizations */
+        .modal-body::-webkit-scrollbar {
+            width: 10px !important;
+            display: block !important;
+        }
+        .modal-body::-webkit-scrollbar-track {
+            background: var(--bg-main, #f1f1f1) !important;
+            border-radius: 8px;
+            border: 1px solid var(--border-color, #e0e0e0);
+        }
+        .modal-body::-webkit-scrollbar-thumb {
+            background: var(--primary, #2167E1) !important;
+            border-radius: 8px;
+            border: 2px solid var(--bg-main, #f1f1f1);
+        }
+        .modal-body::-webkit-scrollbar-thumb:hover {
+            background: var(--primary-hover, #1a52b8) !important;
+        }
+
+        /* Firefox Support Configuration Rules */
+        @supports (-moz-appearance: none) {
+            .modal-body {
+                scrollbar-width: thin !important;
+                scrollbar-color: var(--primary, #2167E1) var(--bg-main, #f1f1f1) !important;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div id="app">Loading Dashboard...</div>
+
+<script>
+(function() {
+    'use strict';
+
+    const SECTIONS = Array.from({ length: 54 }, (_, i) => {
+        let type = "Normal";
+        let speed = 1.0;
+        
+        if (i === 4 || i === 12) {
+            type = "Popular";
+            speed = 25.0; 
+        } else {
+            const chance = Math.random();
+            if (chance > 0.85) {
+                type = "Popular";
+                speed = 10.0; 
+            } else if (chance > 0.40) {
+                type = "Normal";
+                speed = 2.0; 
+            } else {
+                type = "Unpopular";
+                speed = 0.3;
+            }
+        }
+
+        return {
+            name: `Section ${String(i + 1).padStart(2, "0")}`,
+            totalSeats: 78,
+            category: type,
+            drainSpeed: speed
+        };
+    });
+
+    let state = {
+        userID: "2405XXXX",
+        mode: "Normal",
+        timerSetting: 20,
+        isOpen: false,
+        startTime: null,
+        seats: {},
+        chosenSection: null,
+        history: [],
+        semester: null,
+        theme: 'light'
+    };
+
+    let updates = [];
+
+    function updateState(newData) {
+        state = { ...state, ...newData };
+        document.documentElement.setAttribute('data-theme', state.theme);
+        updates.forEach(fn => fn(state));
+        saveData();
+    }
+
+    function saveData() {
+        try {
+            localStorage.setItem('portal_sim_data', JSON.stringify({
+                history: state.history,
+                mode: state.mode,
+                timerSetting: state.timerSetting,
+                theme: state.theme 
+            }));
+        } catch(e) {}
+    }
+
+    function getTimerDuration() {
+        if (state.mode === "Easy") return 30;
+        if (state.mode === "Normal") return 20;
+        if (state.mode === "Hard") return 10;
+        return Math.max(3, Math.min(60, state.timerSetting || 20));
+    }
+
+    function calculateGrade(timeSpent, category, timedOut = false) {
+        if (timedOut || !category) return "F";
+        
+        const seconds = timeSpent / 1000;
+
+        if (category === "Popular") {
+            if (seconds <= 1.5) return "A+";
+            if (seconds <= 2.8) return "A";
+            if (seconds <= 5.0) return "B";
+            return "C";
+        }
+        
+        if (category === "Normal") {
+            if (seconds <= 2.0) return "B";
+            if (seconds <= 4.5) return "C";
+            return "D";
+        }
+        
+        if (category === "Unpopular") {
+            if (seconds <= 2.0) return "C";
+            return "D";
+        }
+
+        return "F";
+    }
+
+    window.toggleTheme = function() {
+        updateState({ theme: state.theme === 'light' ? 'dark' : 'light' });
+    };
+
+    window.changeMode = function(newMode) {
+        updateState({ mode: newMode });
+    };
+
+    window.changeCustomTimer = function(seconds) {
+        updateState({ timerSetting: seconds });
+    };
+
+    window.startLoading = function(sem) {
+        updateState({ semester: sem });
+        setTimeout(() => startQueue(), 100);
+    };
+    
+    let loopId = null;
+    let selectedName = null;
+    let lastTick = 0;
+    
+    function startQueue() {
+        if (loopId) cancelAnimationFrame(loopId);
+        selectedName = null;
+        
+        const freshSeats = {};
+        SECTIONS.forEach(s => { freshSeats[s.name] = s.totalSeats; });
+        
+        updateState({ 
+            seats: freshSeats, 
+            isOpen: true, 
+            startTime: performance.now(),
+            chosenSection: null
+        });
+        
+        const totalLoadingMs = 5000;
+        const startTimeStamp = performance.now();
+        const radius = 52;
+        const circumference = 2 * Math.PI * radius;
+
+        function loadingCountdownLoop(now) {
+            const passed = now - startTimeStamp;
+            const remainingMs = Math.max(0, totalLoadingMs - passed);
+            const progressRatio = Math.min(1, passed / totalLoadingMs);
+            
+            const countLabel = document.getElementById('loadCount');
+            const progressCircle = document.getElementById('circleFill');
+            
+            if (countLabel) {
+                countLabel.textContent = (remainingMs / 1000).toFixed(1) + 's';
+            }
+            
+            if (progressCircle) {
+                const offset = circumference - (progressRatio * circumference);
+                progressCircle.style.strokeDashoffset = offset;
+                
+                if (progressRatio > 0.75) {
+                    progressCircle.style.stroke = "var(--danger, #ef4444)";
+                } else if (progressRatio > 0.40) {
+                    progressCircle.style.stroke = "#f97316"; 
+                } else {
+                    progressCircle.style.stroke = "var(--primary, #2167E1)";
+                }
+            }
+            
+            if (passed < totalLoadingMs) {
+                loopId = requestAnimationFrame(loadingCountdownLoop);
+            } else {
+                state.startTime = performance.now();
+                lastTick = performance.now();
+                showSelectionPopup();
+                loopId = requestAnimationFrame(liveSeatCountdownLoop);
+            }
+        }
+        
+        const targetCircle = document.getElementById('circleFill');
+        if (targetCircle) {
+            targetCircle.style.strokeDasharray = circumference;
+            targetCircle.style.strokeDashoffset = circumference;
+        }
+        
+        loopId = requestAnimationFrame(loadingCountdownLoop);
+    }
+    
+    function liveSeatCountdownLoop(now) {
+        if (state.chosenSection) return;
+        
+        const totalAllowedTime = getTimerDuration() * 1000;
+        const elapsed = now - state.startTime;
+        
+        if (elapsed >= totalAllowedTime) {
+            assignRandomLeftover();
+            return;
+        }
+        
+        if (now - lastTick >= 1000) {
+            lastTick = now;
+            
+            const speedMultiplier = state.mode === 'Hard' ? 4.0 : state.mode === 'Normal' ? 2.0 : 1.0;
+            const updatedSeats = { ...state.seats };
+            
+            SECTIONS.forEach(s => {
+                const currentLeft = updatedSeats[s.name] ?? 78;
+                if (currentLeft > 0) {
+                    const drop = Math.floor((s.drainSpeed * speedMultiplier) + (Math.random() * 3));
+                    updatedSeats[s.name] = Math.max(0, currentLeft - drop);
+                    
+                    if (updatedSeats[s.name] === 0 && selectedName === s.name) {
+                        selectedName = null;
+                    }
+                }
+            });
+            
+            state.seats = updatedSeats;
+        }
+        
+        updatePopupMetrics(elapsed, totalAllowedTime);
+        loopId = requestAnimationFrame(liveSeatCountdownLoop);
+    }
+
+    function assignRandomLeftover() {
+        if (loopId) cancelAnimationFrame(loopId);
+        
+        const remaining = SECTIONS.filter(s => (state.seats[s.name] ?? 0) > 0);
+        
+        if (remaining.length > 0) {
+            const randomPick = remaining[Math.floor(Math.random() * remaining.length)];
+            saveAttempt(randomPick.name, false); 
+        } else {
+            saveAttempt(null, true);
+        }
+    }
+    
+    function updatePopupMetrics(elapsed, limit) {
+        const popup = document.querySelector('#selModal .modal-body');
+        if (!popup) return;
+        
+        const secondsLeft = Math.max(0, (limit - elapsed) / 1000);
+        const timerDisplay = document.getElementById('modalTimer');
+        if (timerDisplay) timerDisplay.textContent = secondsLeft.toFixed(1) + 's';
+        
+        SECTIONS.forEach(s => {
+            const seatCount = state.seats[s.name] ?? 78;
+            const targetRow = document.getElementById(`sec-item-${s.name.replace(' ', '-')}`);
+            if (targetRow) {
+                const badge = targetRow.querySelector('.seats-count');
+                
+                if (seatCount <= 0) {
+                    targetRow.classList.add('disabled');
+                    if (targetRow.classList.contains('selected')) {
+                        targetRow.classList.remove('selected');
+                        const radio = targetRow.querySelector('input[type="radio"]');
+                        if (radio) radio.checked = false;
+                    }
+                    if (badge) {
+                        badge.textContent = `Full`;
+                        badge.className = "seats-count seats-zero";
+                    }
+                } else {
+                    if (badge) {
+                        badge.textContent = `${seatCount} seats left`;
+                        badge.className = seatCount < 20 ? "seats-count seats-low" : "seats-count";
+                    }
+                }
+            }
+        });
+        
+        const submitBtn = document.getElementById('submitBtn');
+        if (submitBtn) {
+            submitBtn.disabled = !selectedName || (state.seats[selectedName] ?? 0) <= 0;
+        }
+    }
+    
+    window.highlightRow = function(name) {
+        if ((state.seats[name] ?? 0) <= 0) return;
+        
+        selectedName = name;
+        
+        document.querySelectorAll('.section-item').forEach(el => {
+            el.classList.remove('selected');
+            const input = el.querySelector('input[type="radio"]');
+            if (input) input.checked = false;
+        });
+        
+        const row = document.getElementById(`sec-item-${name.replace(' ', '-')}`);
+        if (row) {
+            row.classList.add('selected');
+            const input = row.querySelector('input[type="radio"]');
+            if (input) input.checked = true;
+        }
+        
+        const submitBtn = document.getElementById('submitBtn');
+        if (submitBtn) submitBtn.disabled = false;
+    };
+    
+    window.submitSelection = function() {
+        if (!selectedName || (state.seats[selectedName] ?? 0) <= 0) return;
+        if (loopId) cancelAnimationFrame(loopId);
+        saveAttempt(selectedName, false);
+    };
+    
+    function saveAttempt(finalSection, timedOut = false) {
+        const finishTime = performance.now();
+        const timeTaken = state.startTime ? finishTime - state.startTime : 0;
+        const finalSeatsLeft = finalSection ? (state.seats[finalSection] || 0) : 0;
+        
+        const sectionObj = SECTIONS.find(s => s.name === finalSection);
+        const finalCategory = sectionObj ? sectionObj.category : "Unpopular";
+        
+        const log = {
+            id: Math.random().toString(36).slice(2),
+            number: state.history.length + 1,
+            section: finalSection,
+            category: finalCategory,
+            time: timedOut ? 0 : timeTaken,
+            seatsLeft: finalSeatsLeft,
+            grade: calculateGrade(timeTaken, finalCategory, timedOut),
+            difficulty: state.mode,
+            timeSaved: Date.now()
+        };
+        
+        state.history = [...state.history, log];
+        saveData();
+        
+        const modal = document.getElementById('selModal');
+        if (modal) modal.remove();
+        
+        window.location.href = 'result.html';
+    }
+    
+    window.closePopup = function() {
+        if (loopId) cancelAnimationFrame(loopId);
+        assignRandomLeftover();
+    };
+    
+    function showSelectionPopup() {
+        const duration = getTimerDuration();
+        
+        const listHtml = SECTIONS.map(s => {
+            const seatCount = state.seats[s.name] ?? 78;
+            const elementId = `sec-item-${s.name.replace(' ', '-')}`;
+            
+            let tagColor = "tag-low";
+            if (s.category === "Popular") tagColor = "tag-best";
+            if (s.category === "Unpopular") tagColor = "tag-bad";
+
+            const isDisabled = seatCount <= 0 ? 'disabled' : '';
+
+            return `
+                <div class="section-item ${isDisabled}" id="${elementId}" onclick="window.highlightRow('${s.name}')">
+                    <input type="radio" name="section" value="${s.name}" ${isDisabled ? 'disabled' : ''} onclick="event.stopPropagation(); window.highlightRow('${s.name}')">
+                    <div class="section-meta">
+                        <span class="section-code">${s.name}</span>
+                        <span class="desirability-tag ${tagColor}">${s.category}</span>
+                    </div>
+                    <div class="seats-container">
+                        <span class="seats-count ${seatCount <= 0 ? 'seats-zero' : (seatCount < 20 ? 'seats-low' : '')}">${seatCount} seats left</span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        const popupTemplate = `
+            <div class="modal-overlay" id="selModal">
+                <div class="modal">
+                    <div class="modal-header">
+                        <span>Select Class Section</span>
+                        <span class="timer-badge" id="modalTimer">${duration}.0s</span>
+                    </div>
+                    <div class="modal-body">
+                        ${listHtml}
+                        
+                        <div class="bad-ui-footer-container">
+                            <div class="btn-action-group">
+                                <button class="btn-submit" id="submitBtn" onclick="submitSelection()" disabled>Submit Selection</button>
+                                <button class="btn-close" onclick="closePopup()">Cancel</button>
+                            </div>
+                            <div class="warning">⚠️ Choices cannot be changed later. Scroll carefully.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.insertAdjacentHTML('beforeend', popupTemplate);
+    }
+    
+    function drawDashboard() {
+        const activeTimer = getTimerDuration();
+        if (state.isOpen === true) return;
+        
+        const optionsCards = ['Easy', 'Normal', 'Hard', 'Custom'].map(level => {
+            const isSelected = state.mode === level;
+            const details = {
+                Easy: { label: "Easy Mode", badge: "badge-easy", timerText: "30s Timer" },
+                Normal: { label: "Normal Mode", badge: "badge-normal", timerText: "20s Timer" },
+                Hard: { label: "Hard Mode", badge: "badge-hard", timerText: "10s Timer" },
+                Custom: { label: "Custom Setup", badge: "badge-custom", timerText: "Adjustable" }
+            }[level];
+            
+            return `
+                <div class="difficulty-card ${isSelected ? 'selected' : ''}" onclick="changeMode('${level}');">
+                    <div class="difficulty-info">
+                        <div class="difficulty-title" style="margin-bottom: 8px;">${details.label}</div>
+                        <span class="badge ${details.badge}">${details.timerText}</span>
+                    </div>
+                    <div class="difficulty-radio-ui"></div>
+                </div>
+            `;
+        }).join('');
+        
+        const customSlider = state.mode === "Custom" ? `
+            <div class="custom-box">
+                <div class="custom-row">
+                    <span>Set Timer:</span>
+                    <span class="custom-value">${state.timerSetting}s</span>
+                </div>
+                <input type="range" min="3" max="60" value="${state.timerSetting}" oninput="changeCustomTimer(parseInt(this.value));">
+            </div>
+        ` : '';
+        
+        let subView = '';
+        
+        if (!state.semester) {
+            subView = `
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">Choose Configuration</div>
+                        <div class="window-badge">Timer: ${activeTimer}s</div>
+                    </div>
+                    <div class="grid-2">${optionsCards}</div>
+                    ${customSlider}
+                </div>
+                
+                <div class="semester-box">
+                    <div style="font-weight:700; font-size:16px; margin-bottom:12px;">Select Semester to Start:</div>
+                    <div class="semester-buttons">
+                        <button class="btn-semester" onclick="startLoading('3rd')">3rd Semester</button>
+                        <button class="btn-semester" onclick="startLoading('5th')">5th Semester</button>
+                    </div>
+                </div>
+            `;
+        } else {
+            const radius = 52;
+            const circumference = 2 * Math.PI * radius;
+            
+            subView = `
+                <div class="loader-wrapper">
+                    <div class="circle-container">
+                        <svg class="circle-svg">
+                            <circle class="circle-bg" cx="60" cy="60" r="${radius}"></circle>
+                            <circle class="circle-progress" id="circleFill" cx="60" cy="60" r="${radius}" 
+                                style="stroke-dasharray: ${circumference}; stroke-dashoffset: ${circumference};">
+                            </circle>
+                        </svg>
+                        <div class="countdown-text" id="loadCount">5.0s</div>
+                    </div>
+                    <div class="loader-title">Get Ready...</div>
+                </div>
+            `;
+        }
+        
+        document.getElementById('app').innerHTML = `
+            <div class="header">
+                <div class="welcome-text">User ID: <strong>${state.userID}</strong></div>
+                <div class="right-header">
+                    <button class="theme-toggle-btn" style="font-size: 20px; padding: 6px 12px;" onclick="toggleTheme()">
+                        ${state.theme === 'light' ? '🌙' : '☀️'}
+                    </button>
+                    <span class="logo">PORTAL</span>
+                </div>
+            </div>
+            <div class="main-layout">
+                <div class="sidebar">
+                    <div class="sidebar-nav-title">Menu</div>
+                    <div class="sidebar-nav">
+                        <ul>
+                            <li><a href="#" class="active" onclick="updateState({semester:null}); event.preventDefault();">Section Picker</a></li>
+                            <li><a href="result.html">Simulation History</a></li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="content">
+                    <div class="container">
+                        <div class="page-title">Section Booking Simulation</div>
+                        <div class="page-subtitle">Pick your preferred sections before they run out of available seats!</div>
+                        ${subView}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    try {
+        const cache = localStorage.getItem('portal_sim_data');
+        if (cache) {
+            const saved = JSON.parse(cache);
+            if (saved.history) state.history = saved.history;
+            if (saved.mode) state.mode = saved.mode;
+            if (saved.timerSetting) state.timerSetting = saved.timerSetting;
+            if (saved.theme) state.theme = saved.theme; 
+        }
+    } catch(e) {}
+
+    updates.push(drawDashboard);
+    document.documentElement.setAttribute('data-theme', state.theme);
+    drawDashboard();
+})();
+</script>
+</body>
+</html>
