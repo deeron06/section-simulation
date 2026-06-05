@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portal Practice - Results</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .score-hero-layout { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 40px 24px; border-radius: 16px; background: var(--bg-surface); border: 1px solid var(--border-color); margin-bottom: 28px; }
+        .score-badge-graphic { width: 96px; height: 96px; border-radius: 50%; background: var(--primary-light); color: var(--primary); font-size: 42px; font-weight: 900; display: flex; align-items: center; justify-content: center; margin-bottom: 16px; border: 2px solid var(--primary); }
+        .score-headline { font-size: 20px; font-weight: 800; color: var(--text-main); margin-bottom: 24px; display: flex; align-items: center; gap: 10px; }
+        
+        .metric-inline-group { display: flex; gap: 32px; flex-wrap: wrap; justify-content: center; width: 100%; border-top: 1px solid var(--border-color); padding-top: 24px; }
+        .metric-datapoint { display: flex; flex-direction: column; align-items: center; }
+        .metric-val { font-size: 18px; font-weight: 800; color: var(--text-main); }
+        .metric-lbl { font-size: 11px; text-transform: uppercase; font-weight: 700; color: var(--text-muted); margin-top: 2px; }
+
+        .history-table { width: 100%; border-collapse: collapse; text-align: left; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden; }
+        .history-table th, .history-table td { padding: 14px 18px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+        .history-table th { background: var(--bg-main); font-weight: 700; text-transform: uppercase; font-size: 11px; color: var(--text-muted); letter-spacing: 0.5px; }
+        .history-table tr:last-child td { border-bottom: none; }
+        
+        .btn-restart { background: var(--primary); color: white; border: none; padding: 12px 28px; border-radius: 10px; cursor: pointer; font-weight: 700; font-size: 14px; text-decoration: none; display: inline-block; transition: background 0.2s; }
+        .btn-restart:hover { background: var(--primary-hover); }
+        .empty-history-placeholder { text-align: center; padding: 48px; color: var(--text-muted); font-weight: 500; }
+        
+        .section-cell-wrapper { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+    </style>
+</head>
+<body>
+
+<div id="app">Loading Results...</div>
+
+<script>
+(function() {
+    'use strict';
+
+    let state = {
+        userID: "2405XXXX",
+        history: [],
+        theme: 'light'
+    };
+
+    function getCategoryTag(category) {
+        const cat = category || "Normal";
+        if (cat === "Popular") return "tag-best";
+        if (cat === "Unpopular") return "tag-bad";
+        return "tag-low";
+    }
+
+    function loadSavedData() {
+        try {
+            const cache = localStorage.getItem('portal_sim_data');
+            if (cache) {
+                const saved = JSON.parse(cache);
+                if (saved.history) state.history = saved.history;
+                if (saved.theme) state.theme = saved.theme;
+            }
+        } catch(e) {}
+    }
+
+    function saveThemePreference() {
+        try {
+            const currentData = JSON.parse(localStorage.getItem('portal_sim_data') || '{}');
+            currentData.theme = state.theme; 
+            localStorage.setItem('portal_sim_data', JSON.stringify(currentData));
+        } catch(e) {}
+    }
+
+    window.toggleTheme = function() {
+        const nextTheme = state.theme === 'light' ? 'dark' : 'light';
+        state.theme = nextTheme;
+        document.documentElement.setAttribute('data-theme', nextTheme);
+        saveThemePreference(); 
+        renderResultsPage();
+    };
+
+    window.clearAllHistory = function() {
+        if(confirm("Are you sure you want to delete your score history?")) {
+            state.history = [];
+            try {
+                const data = JSON.parse(localStorage.getItem('portal_sim_data') || '{}');
+                data.history = [];
+                localStorage.setItem('portal_sim_data', JSON.stringify(data));
+            } catch(e) {}
+            renderResultsPage();
+        }
+    };
+
+    function renderResultsPage() {
+        loadSavedData();
+        document.documentElement.setAttribute('data-theme', state.theme);
+        
+        const sortedRuns = [...state.history].sort((a, b) => b.timeSaved - a.timeSaved);
+        const mostRecent = sortedRuns[0] || null;
+        
+        let heroBlockHtml = '';
+        if (!mostRecent) {
+            heroBlockHtml = `
+                <div class="score-hero-layout">
+                    <div class="score-badge-graphic">?</div>
+                    <div class="score-headline" style="margin-bottom:0;">No Attempts Logged</div>
+                </div>
+            `;
+        } else {
+            const displaySec = mostRecent.section || "System Assigned Section";
+            const speedText = mostRecent.time > 0 ? `${(mostRecent.time / 1000).toFixed(2)}s` : "Expired";
+            const currentCategory = mostRecent.category || "Normal";
+            const tagStyle = getCategoryTag(currentCategory);
+
+            heroBlockHtml = `
+                <div class="score-hero-layout">
+                    <div class="score-badge-graphic">${mostRecent.grade}</div>
+                    <div class="score-headline">
+                        <span>Assigned Class: ${displaySec}</span>
+                        <span class="desirability-tag ${tagStyle}">${currentCategory}</span>
+                    </div>
+                    
+                    <div class="metric-inline-group">
+                        <div class="metric-datapoint">
+                            <span class="metric-val">${speedText}</span>
+                            <span class="metric-lbl">Speed</span>
+                        </div>
+                        <div class="metric-datapoint">
+                            <span class="metric-val">${mostRecent.seatsLeft}</span>
+                            <span class="metric-lbl">Remaining Seats</span>
+                        </div>
+                        <div class="metric-datapoint">
+                            <span class="metric-val">${mostRecent.difficulty}</span>
+                            <span class="metric-lbl">Difficulty</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        let historyRows = `<tr><td colspan="5" class="empty-history-placeholder">No past simulation attempts saved.</td></tr>`;
+        
+        if (sortedRuns.length > 0) {
+            historyRows = sortedRuns.map(run => {
+                const rowCategory = run.category || "Normal";
+                const rowTagStyle = getCategoryTag(rowCategory);
+                return `
+                    <tr>
+                        <td style="font-weight:700;">Attempt #${run.number}</td>
+                        <td>
+                            <div class="section-cell-wrapper">
+                                <span style="color:var(--primary);">${run.section || '<span style="color:var(--danger)">AUTO-ASSIGNED</span>'}</span>
+                                <span class="desirability-tag ${rowTagStyle}" style="font-size: 11px; padding: 2px 6px;">${rowCategory}</span>
+                            </div>
+                        </td>
+                        <td style="font-weight: 600;">${run.time > 0 ? (run.time / 1000).toFixed(2) + 's' : 'Expired'}</td>
+                        <td><span class="badge ${run.difficulty === 'Hard' ? 'badge-hard' : run.difficulty === 'Easy' ? 'badge-easy' : 'badge-normal'}">${run.difficulty}</span></td>
+                        <td><strong style="font-size:15px;">[${run.grade}]</strong></td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        document.getElementById('app').innerHTML = `
+            <div class="header">
+                <div class="welcome-text">User ID: <strong>${state.userID}</strong></div>
+                <div class="right-header">
+                    <button class="theme-toggle-btn" style="font-size: 20px; padding: 6px 12px;" onclick="toggleTheme()">
+                        ${state.theme === 'light' ? '🌙' : '☀️'}
+                    </button>
+                    <span class="logo">PORTAL</span>
+                </div>
+            </div>
+            <div class="main-layout">
+                <div class="sidebar">
+                    <div class="sidebar-nav-title">Menu</div>
+                    <div class="sidebar-nav">
+                        <ul>
+                            <li><a href="index.html">Section Picker</a></li>
+                            <li><a href="#" class="active">Simulation History</a></li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="content">
+                    <div class="container">
+                        
+                        ${heroBlockHtml}
+                        
+                        <div style="display:flex; justify-content: space-between; align-items:center; margin-bottom:16px;">
+                            <h3 style="font-size:16px; font-weight:700;">Practice Attempt History</h3>
+                            ${sortedRuns.length > 0 ? `<button onclick="clearAllHistory()" style="background:none; border:none; color:var(--danger); cursor:pointer; font-weight:600; font-size:13px;">Clear History Records</button>` : ''}
+                        </div>
+
+                        <table class="history-table">
+                            <thead>
+                                <tr>
+                                    <th>Run ID</th>
+                                    <th>Assigned Section</th>
+                                    <th>Time Taken</th>
+                                    <th>Game Mode</th>
+                                    <th>Score Grade</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${historyRows}
+                            </tbody>
+                        </table>
+                        
+                        <div style="margin-top:28px; text-align:center;">
+                            <a href="index.html" class="btn-restart">Start Another Simulation</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+
+    loadSavedData();
+    document.documentElement.setAttribute('data-theme', state.theme);
+    renderResultsPage();
+})();
+</script>
+</body>
+</html>
